@@ -94,7 +94,8 @@ class Token:
         self.link        = IdMap[self.linkId]
         self.variable    = IdMap[self.variableId]
         self.function    = IdMap[self.functionId]
-        self.values      = IdMap[self.valuesId]
+        # TODO: Also broken
+        #self.values      = IdMap[self.valuesId]
         self.astParent   = IdMap[self.astParentId]
         self.astOperand1 = IdMap[self.astOperand1Id]
         self.astOperand2 = IdMap[self.astOperand2Id]
@@ -239,9 +240,10 @@ class CppcheckData:
             if element.tag == 'variables':
                 for variable in element:
                     self.variables.append(Variable(variable))
-            if element.tag == 'valueflow':
-                for values in element:
-                    self.valueflow.append(ValueFlow(values))
+# Output or parser is broken
+#            if element.tag == 'valueflow':
+#                for values in element:
+#                    self.valueflow.append(ValueFlow(values))
 
         IdMap = {}
         IdMap[None] = None
