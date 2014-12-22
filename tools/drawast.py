@@ -56,14 +56,18 @@ def add_label(token):
     escaped_label = token.str.replace('"', '\\"')
     graph += '    "' + token.Id + '" [label="' + escaped_label + '"];\n'
 
-def add_node(token, astId, astToken):
+def add_node(token, astId, astToken, edge_label=None):
         global graph
 
         if astId != astToken.Id:
             raise ValueError('AST tree error: ast id ' + astId + ' does not match id of ast token ' + astToken.Id)
 
         # Graph connection
-        graph += '    "' + token.Id + '" -> "' + astId + '";\n'
+        graph += '    "' + token.Id + '" -> "' + astId + '"'
+        if edge_label:
+            graph += ' [ label="' + edge_label + '" ]'
+
+        graph += ';\n'
 
 count = 0
 for token in data.tokenlist:
@@ -71,18 +75,23 @@ for token in data.tokenlist:
         print('WARNING: Note limit of ' + str(args.node_limit) + ' reached. Use --node-limit to increase. Skipping remaining nodes.')
         break
 
-    if token.astOperand1Id or token.astOperand2Id:
-        add_label(token)
-        count += 1
+    add_label(token)
+    if token.next:
+        # Don't link the end of a function
+        if token.str == '}' and token.scope:
+            scope = token.scope
+            if scope.classEnd == token.Id and scope.type == 'Function':
+                pass
+        else:
+            add_node(token, token.next.Id, token.next)
+            count += 1
 
-    if token.astOperand1Id:
-        add_label(token.astOperand1)
-        add_node(token, token.astOperand1Id, token.astOperand1)
-        count += 1
+#    if token.astOperand1Id:
+#        add_node(token, token.astOperand1Id, token.astOperand1, 'AST')
+#        count += 1
 
     if token.astOperand2Id:
-        add_label(token.astOperand2)
-        add_node(token, token.astOperand2Id, token.astOperand2)
+        add_node(token, token.astOperand2Id, token.astOperand2, 'AST')
         count += 1
 
 graph += '}\n'
