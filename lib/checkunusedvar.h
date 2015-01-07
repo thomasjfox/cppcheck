@@ -25,6 +25,7 @@
 #include "check.h"
 
 #include <map>
+#include <string>
 
 class Type;
 class Scope;
@@ -82,6 +83,14 @@ private:
     void unreadVariableError(const Token *tok, const std::string &varname);
     void unassignedVariableError(const Token *tok, const std::string &varname);
 
+    // used by multi-file analysis
+    static void unusedGlobalVariableError(ErrorLogger * const errorLogger,
+                                    const std::string &filename, unsigned int lineNumber,
+                                    const std::string &varname);
+    static void globalVariableCanBeStaticError(ErrorLogger * const errorLogger,
+                                    const std::string &filename, unsigned int lineNumber,
+                                    const std::string &varname);
+
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const {
         CheckUnusedVar c(0, settings, errorLogger);
 
@@ -91,7 +100,52 @@ private:
         c.unreadVariableError(0, "varname");
         c.unassignedVariableError(0, "varname");
         c.unusedStructMemberError(0, "structname", "variable");
+        c.unusedGlobalVariableError(errorLogger, "", 0, "varname");
+        c.globalVariableCanBeStaticError(errorLogger, "", 0, "varname");
     }
+
+    /// data structure for inter-file global variable usage analysis
+    struct CPPCHECKLIB GlobalVariableUsage {
+        std::string varName;
+        std::string filename;
+        unsigned int lineNumber;
+
+        bool isStatic;
+        bool isExtern;
+        std::set<std::string> used_in_files;
+
+        GlobalVariableUsage()
+            : lineNumber(0)
+            , isStatic(false)
+            , isExtern(false) {
+        }
+
+        GlobalVariableUsage(const std::string &name,
+                            const std::string &filename_,
+                            unsigned int linenr,
+                            bool is_static,
+                            bool is_extern)
+            : varName(name)
+            , filename(filename_)
+            , lineNumber(linenr)
+            , isStatic(is_static)
+            , isExtern(is_extern) {
+        }
+    };
+
+    /* data for multifile checking */
+    struct VarUsageFileInfo : public Check::FileInfo {
+        std::vector<CheckUnusedVar::GlobalVariableUsage> globalvar_usage;
+    };
+
+    std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> collectGlobalVariables(const Tokenizer *tokenizer) const;
+    void determineGlobalVariableUsage(std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> &usage, const Tokenizer *tokenizer) const;
+
+    /** @brief Parse current TU and extract file info */
+    Check::FileInfo *getFileInfo(const Tokenizer *tokenizer, const Settings *settings) const;
+
+    /** @brief Analyse all file infos for all TU */
+    void analyseWholeProgram(const std::list<Check::FileInfo*> &fileInfo, ErrorLogger &errorLogger);
 
     static std::string myName() {
         return "UnusedVar";

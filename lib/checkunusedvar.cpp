@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <utility>
+#include <iostream>
 //---------------------------------------------------------------------------
 
 // Register this check class (by creating a static instance of it)
@@ -1133,6 +1134,171 @@ void CheckUnusedVar::checkFunctionVariableUsage()
     }
 }
 
+std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> CheckUnusedVar::collectGlobalVariables(const Tokenizer *tokenizer) const
+{
+    // index of varId -> variable usage
+    std::map<unsigned int, GlobalVariableUsage> globalvar_usage;
+
+    const SymbolDatabase *symbolDatabase = tokenizer->getSymbolDatabase();
+    for (std::list<Scope>::const_iterator scope = symbolDatabase->scopeList.begin(); scope != symbolDatabase->scopeList.end(); ++scope) {
+        // check global variables only
+        if (scope->type != Scope::eGlobal)
+            continue;
+
+        for (std::list<Variable>::const_iterator var = scope->varlist.begin(); var != scope->varlist.end(); ++var) {
+            // check plain data types only. C++ classes might lock resources etc.
+            // Special case: "struct" is a data type in C, in C++ it's a public class
+            // TODO: May be add inconclusive check for global, unused C++ classes
+            if ((var->isClass() && !tokenizer->isC()) || var->isStlType())
+                continue;
+            if (var->declarationId() == 0 || var->nameToken() == nullptr)
+                continue;
+
+            // TODO: Handle duplicate declarationId in C mode (#6418)
+
+            const std::string varname = var->name();
+            const std::string filename = tokenizer->list.getSourceFilePath();
+
+            GlobalVariableUsage usage(varname,
+                                      filename,
+                                      var->nameToken()->linenr(),
+                                      var->isStatic(),
+                                      var->isExtern());
+
+            globalvar_usage[var->declarationId()] = usage;
+        }
+    }
+
+    return globalvar_usage;
+}
+
+void CheckUnusedVar::determineGlobalVariableUsage(std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> &usage, const Tokenizer *tokenizer) const
+{
+    const SymbolDatabase *symbolDatabase = tokenizer->getSymbolDatabase();
+
+    // check function scopes for variable usage
+    const std::size_t functions = symbolDatabase->functionScopes.size();
+    for (std::size_t i = 0; i < functions; ++i) {
+        const Scope * scope = symbolDatabase->functionScopes[i];
+
+        for (Token *tok = scope->classStart->next(); tok != scope->classEnd; tok = tok->next()) {
+            if (Token::Match(tok, "%var%")) {
+                std::map<unsigned int, GlobalVariableUsage>::iterator it = usage.find(tok->varId());
+                // check if global variable at all
+                if (it != usage.end())
+                    it->second.used_in_files.insert(tokenizer->list.getSourceFilePath());
+            }
+        }
+    }
+
+/*
+    // debug dump
+    std::cerr << "<<< " << tokenizer->list.getSourceFilePath() << " global variable map >>>" << std::endl;
+    for (std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
+        std::cerr << "[GLOBAL] variable: " << it->second.varName << " (" << it->first << ")";
+        std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
+        std::cerr << ", isStatic: " << it->second.isStatic;
+        std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
+        for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
+        {
+            std::cerr << "    used in: " << *debug_used << std::endl;
+        }
+    }
+    std::cerr << std::endl;
+*/
+}
+
+Check::FileInfo *CheckUnusedVar::getFileInfo(const Tokenizer *tokenizer, const Settings *settings) const
+{
+    // TODO: Remove settings->_jobs == 1 limit once the threading
+    //       code collects getFileInfo() from all completed threads.
+    if (!settings->isEnabled("style") || settings->_jobs != 1)
+        return nullptr;
+
+    // find all global variables. Index of varId -> usage
+    std::map<unsigned int, GlobalVariableUsage> usage = collectGlobalVariables(tokenizer);
+
+    // check variable usage
+    determineGlobalVariableUsage(usage, tokenizer);
+
+    // keep results. Strip varId since it's useless in multi-file checking
+    VarUsageFileInfo *info = new VarUsageFileInfo();
+    for(std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it)
+        info->globalvar_usage.push_back(it->second);
+
+    return info;
+}
+
+void CheckUnusedVar::analyseWholeProgram(const std::list<Check::FileInfo*> &fileInfo, ErrorLogger &errorLogger)
+{
+    // build map of all global variables.
+    // "static" variables are excluded since the names might clash
+    std::map<std::string, GlobalVariableUsage> usage;
+
+    for(std::list<Check::FileInfo*>::const_iterator raw_per_file_info = fileInfo.begin(); raw_per_file_info != fileInfo.end(); ++raw_per_file_info) {
+        const VarUsageFileInfo *per_file_info = dynamic_cast<VarUsageFileInfo*>(*raw_per_file_info);
+        if (!per_file_info)
+            continue;
+
+        for(std::vector<CheckUnusedVar::GlobalVariableUsage>::const_iterator info = per_file_info->globalvar_usage.begin(); info != per_file_info->globalvar_usage.end(); ++info) {
+            if (info->isStatic) {
+                if (info->used_in_files.size() == 0)
+                    unusedGlobalVariableError(&errorLogger,
+                                              info->filename,
+                                              info->lineNumber,
+                                              info->varName);
+
+                // go to next variable
+                continue;
+            }
+
+            // unseen variable?
+            std::map<std::string, GlobalVariableUsage>::iterator entry = usage.find(info->varName);
+            if(entry == usage.end()) {
+                usage[info->varName] = *info;
+            } else {
+                // merge info
+                entry->second.isExtern |= info->isExtern;
+                for(std::set<std::string>::const_iterator filename = info->used_in_files.begin(); filename != info->used_in_files.end(); ++filename)
+                    entry->second.used_in_files.insert(*filename);
+            }
+        }
+    }
+
+/*
+    // debug dump
+    std::cerr << "<<< analyseWholeProgram() global variable map >>>" << std::endl;
+    for (std::map<std::string, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
+        std::cerr << "[GLOBAL] variable: " << it->second.varName;
+        std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
+        std::cerr << ", isStatic: " << it->second.isStatic;
+        std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
+        for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
+        {
+            std::cerr << "    used in: " << *debug_used << std::endl;
+        }
+    }
+*/
+    // check all global variables now
+    for(std::map<std::string, GlobalVariableUsage>::const_iterator var = usage.begin(); var != usage.end(); ++var) {
+        if (var->second.used_in_files.empty()) {
+            unusedGlobalVariableError(&errorLogger,
+                                      var->second.filename,
+                                      var->second.lineNumber,
+                                      var->second.varName);
+        } else if (var->second.used_in_files.size() == 1 && !var->second.isExtern) {
+            std::string used_in_file = *(var->second.used_in_files.begin());
+
+            // check if used in the same file as the variables was first found in
+            if (used_in_file == var->second.filename)
+                globalVariableCanBeStaticError(&errorLogger,
+                                               var->second.filename,
+                                               var->second.lineNumber,
+                                               var->second.varName);
+        }
+    }
+}
+
 void CheckUnusedVar::unusedVariableError(const Token *tok, const std::string &varname)
 {
     reportError(tok, Severity::style, "unusedVariable", "Unused variable: " + varname);
@@ -1151,6 +1317,44 @@ void CheckUnusedVar::unreadVariableError(const Token *tok, const std::string &va
 void CheckUnusedVar::unassignedVariableError(const Token *tok, const std::string &varname)
 {
     reportError(tok, Severity::style, "unassignedVariable", "Variable '" + varname + "' is not assigned a value.");
+}
+
+void CheckUnusedVar::unusedGlobalVariableError(ErrorLogger * const errorLogger,
+        const std::string &filename, unsigned int lineNumber,
+        const std::string &varname)
+{
+    std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
+    if (!filename.empty()) {
+        ErrorLogger::ErrorMessage::FileLocation fileLoc;
+        fileLoc.setfile(filename);
+        fileLoc.line = lineNumber;
+        locationList.push_back(fileLoc);
+    }
+
+    const ErrorLogger::ErrorMessage errmsg(locationList, Severity::style, "Global variable '" + varname + "' is never used.", "unusedGlobalVariable", false);
+    if (errorLogger)
+        errorLogger->reportErr(errmsg);
+    else
+        reportError(errmsg);
+}
+
+void CheckUnusedVar::globalVariableCanBeStaticError(ErrorLogger * const errorLogger,
+        const std::string &filename, unsigned int lineNumber,
+        const std::string &varname)
+{
+    std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
+    if (!filename.empty()) {
+        ErrorLogger::ErrorMessage::FileLocation fileLoc;
+        fileLoc.setfile(filename);
+        fileLoc.line = lineNumber;
+        locationList.push_back(fileLoc);
+    }
+
+    const ErrorLogger::ErrorMessage errmsg(locationList, Severity::style, "Global variable '" + varname + "' is used by this file only. It can be made static", "globalVariableCanBeStatic", false);
+    if (errorLogger)
+        errorLogger->reportErr(errmsg);
+    else
+        reportError(errmsg);
 }
 
 //---------------------------------------------------------------------------
