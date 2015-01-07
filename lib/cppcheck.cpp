@@ -246,8 +246,13 @@ unsigned int CppCheck::processFile(const std::string& filename, std::istream& fi
         internalError(filename, e.errorMessage);
     }
 
-    if (_settings.isEnabled("information") || _settings.checkConfiguration)
-        reportUnmatchedSuppressions(_settings.nomsg.getUnmatchedLocalSuppressions(filename, _settings._jobs == 1 && _settings.isEnabled("unusedFunction")));
+    // In analyzeWholeProgram mode, unmatched suppressions are
+    // collected after all files are processed
+    if (!_settings.analyzeWholeProgram && (_settings.isEnabled("information") || _settings.checkConfiguration)) {
+        reportUnmatchedSuppressions(_settings.nomsg.getUnmatchedLocalSuppressions(filename, false));
+    }
+
+    checkedFiles.push_back(filename);
 
     _errorList.clear();
     return exitcode;
@@ -256,7 +261,7 @@ unsigned int CppCheck::processFile(const std::string& filename, std::istream& fi
 void CppCheck::internalError(const std::string &filename, const std::string &msg)
 {
     const std::string fixedpath = Path::toNativeSeparators(filename);
-    const std::string fullmsg("Bailing out from checking " + fixedpath + " since there was a internal error: " + msg);
+    const std::string fullmsg("Bailing out from checking " + fixedpath + " since there was an internal error: " + msg);
 
     if (_settings.isEnabled("information")) {
         const ErrorLogger::ErrorMessage::FileLocation loc1(filename, 0);
@@ -677,8 +682,13 @@ void CppCheck::getErrorMessages()
 
 void CppCheck::analyseWholeProgram()
 {
-    // Analyse the tokens..
+    // Analyse the tokens
     for (std::list<Check *>::const_iterator it = Check::instances().begin(); it != Check::instances().end(); ++it)
         (*it)->analyseWholeProgram(fileInfo, *this);
-}
 
+    if (_settings.isEnabled("information") || _settings.checkConfiguration) {
+        for (std::vector<std::string>::const_iterator file = checkedFiles.begin(); file != checkedFiles.end(); ++file) {
+            _errorLogger.reportUnmatchedSuppressions(_settings.nomsg.getUnmatchedLocalSuppressions(*file, true));
+        }
+    }
+}

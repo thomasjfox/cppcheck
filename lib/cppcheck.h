@@ -28,6 +28,7 @@
 
 #include <string>
 #include <list>
+#include <vector>
 #include <istream>
 
 class Tokenizer;
@@ -211,6 +212,9 @@ private:
 
     /** File info used for whole program analysis */
     std::list<Check::FileInfo*> fileInfo;
+
+    /** List of checked filenames. Used to collect unmatched local suppressions */
+    std::vector<std::string> checkedFiles;
 };
 
 /// @}

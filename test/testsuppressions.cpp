@@ -124,12 +124,14 @@ private:
         Settings& settings = cppCheck.settings();
         settings._inlineSuppressions = true;
         settings.addEnabled("information");
+        settings.analyzeWholeProgram = true;
         if (!suppression.empty()) {
             std::string r = settings.nomsg.addSuppressionLine(suppression);
             ASSERT_EQUALS("", r);
         }
 
         cppCheck.check("test.cpp", code);
+        cppCheck.analyseWholeProgram();
 
         reportUnmatchedSuppressions(settings.nomsg.getUnmatchedGlobalSuppressions(true));
     }
@@ -153,7 +155,6 @@ private:
             executor.addFileContent(i->first, code);
 
         executor.check();
-
         reportUnmatchedSuppressions(settings.nomsg.getUnmatchedGlobalSuppressions(false));
     }
 
@@ -166,11 +167,13 @@ private:
         Settings& settings = cppCheck.settings();
         settings._inlineSuppressions = true;
         settings.addEnabled("information");
+        settings.analyzeWholeProgram = true;
         if (!suppression.empty())
             settings.nomsg.addSuppressionLine(suppression);
 
         for (int i = 0; names[i] != NULL; ++i)
             cppCheck.check(names[i], codes[i]);
+        cppCheck.analyseWholeProgram();
 
         reportUnmatchedSuppressions(settings.nomsg.getUnmatchedGlobalSuppressions(true));
     }
@@ -327,7 +330,7 @@ private:
     void inlinesuppress_unusedFunction() const { // #4210, #4946 - wrong report of "unmatchedSuppression" for "unusedFunction"
         Suppressions suppressions;
         suppressions.addSuppression("unusedFunction", "test.c", 3U);
-        ASSERT_EQUALS(false, !suppressions.getUnmatchedLocalSuppressions("test.c", true).empty());
+        ASSERT_EQUALS(true, !suppressions.getUnmatchedLocalSuppressions("test.c", true).empty());
         ASSERT_EQUALS(false, !suppressions.getUnmatchedGlobalSuppressions(true).empty());
         ASSERT_EQUALS(false, !suppressions.getUnmatchedLocalSuppressions("test.c", false).empty());
         ASSERT_EQUALS(false, !suppressions.getUnmatchedGlobalSuppressions(false).empty());

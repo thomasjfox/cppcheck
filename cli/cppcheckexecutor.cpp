@@ -193,6 +193,8 @@ int CppCheckExecutor::check(int argc, const char* const argv[])
     if (settings.terminated()) {
         return EXIT_SUCCESS;
     }
+    if (settings._jobs == 1)
+        settings.analyzeWholeProgram = true;
 
     if (cppCheck.settings().exceptionHandling) {
         return check_wrapper(cppCheck, argc, argv);
@@ -758,7 +760,7 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
     }
 
     unsigned int returnValue = 0;
-    if (settings._jobs == 1) {
+    if (settings.analyzeWholeProgram) {
         // Single process
 
         std::size_t totalfilesize = 0;
@@ -800,7 +802,7 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
     }
 
     if (settings.isEnabled("information") || settings.checkConfiguration)
-        reportUnmatchedSuppressions(settings.nomsg.getUnmatchedGlobalSuppressions(settings._jobs == 1 && settings.isEnabled("unusedFunction")));
+        reportUnmatchedSuppressions(settings.nomsg.getUnmatchedGlobalSuppressions(settings.analyzeWholeProgram));
 
     if (!settings.checkConfiguration) {
         cppcheck.tooManyConfigsError("",0U);

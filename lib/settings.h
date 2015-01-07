@@ -72,6 +72,9 @@ public:
     /** @brief Inconclusive checks */
     bool inconclusive;
 
+    /** @brief analyze whole program (unusedFunctions etc). Single threaded only */
+    bool analyzeWholeProgram;
+
     /**
      * When this flag is false (default) then experimental
      * heuristics and checks are disabled.
