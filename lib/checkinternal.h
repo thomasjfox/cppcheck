@@ -54,6 +54,7 @@ public:
         checkInternal.checkUnknownPattern();
         checkInternal.checkRedundantNextPrevious();
         checkInternal.checkExtraWhitespace();
+        checkInternal.checkSettingName();
     }
 
     /** @brief %Check if a simple pattern is used inside Token::Match or Token::findmatch */
@@ -74,6 +75,9 @@ public:
     /** @brief %Check if there is whitespace at the beginning or at the end of a pattern */
     void checkExtraWhitespace();
 
+    /** @brief %Check if the setting name in isEnabled() is a valid one */
+    void checkSettingName();
+
 private:
     void multiComparePatternError(const Token *tok, const std::string &pattern, const std::string &funcname);
     void simplePatternError(const Token *tok, const std::string &pattern, const std::string &funcname);
@@ -83,6 +87,7 @@ private:
     void redundantNextPreviousError(const Token* tok, const std::string& func1, const std::string& func2);
     void orInComplexPattern(const Token *tok, const std::string &pattern, const std::string &funcname);
     void extraWhitespaceError(const Token *tok, const std::string &pattern, const std::string &funcname);
+    void settingNameError(const Token *tok, const std::string &name);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const {
         CheckInternal c(0, settings, errorLogger);
@@ -94,6 +99,7 @@ private:
         c.redundantNextPreviousError(0, "previous", "next");
         c.orInComplexPattern(0, "||", "Match");
         c.extraWhitespaceError(0, "%str% ", "Match");
+        c.settingNameError(0, "foobar");
     }
 
     static std::string myName() {

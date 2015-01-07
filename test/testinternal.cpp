@@ -43,6 +43,7 @@ private:
         TEST_CASE(invalidMultiCompare);
         TEST_CASE(orInComplexPattern);
         TEST_CASE(extraWhitespace);
+        TEST_CASE(validSettingName);
     }
 
     void check(const char code[]) {
@@ -420,6 +421,21 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:3]: (warning) Found extra whitespace inside Token::findsimplematch() call: \"foobar \"\n", errout.str());
     }
+
+    void validSettingName() {
+        check("void f() {\n"
+              "    if (!_settings->isEnabled(\"internal\"))\n"
+              "        return;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "    if (!_settings->isEnabled(\"removed_during_factoring\"))\n"
+              "        return;\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Invalid setting name used in isEnabled(): \"removed_during_factoring\"\n", errout.str());
+    }
+
 };
 
 REGISTER_TEST(TestInternal)

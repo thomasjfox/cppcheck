@@ -59,6 +59,25 @@ Settings::Settings()
 #endif
 }
 
+std::set<std::string> Settings::get_all_ids() const
+{
+    static std::set<std::string> ids;
+    if (ids.empty()) {
+        ids.insert("warning");
+        ids.insert("style");
+        ids.insert("performance");
+        ids.insert("portability");
+        ids.insert("information");
+        ids.insert("missingInclude");
+        ids.insert("unusedFunction");
+#ifdef CHECK_INTERNAL
+        ids.insert("internal");
+#endif
+    }
+
+    return ids;
+}
+
 std::string Settings::addEnabled(const std::string &str)
 {
     // Enable parameters may be comma separated...
@@ -81,19 +100,7 @@ std::string Settings::addEnabled(const std::string &str)
 
     bool handled = false;
 
-    static std::set<std::string> id;
-    if (id.empty()) {
-        id.insert("warning");
-        id.insert("style");
-        id.insert("performance");
-        id.insert("portability");
-        id.insert("information");
-        id.insert("missingInclude");
-        id.insert("unusedFunction");
-#ifdef CHECK_INTERNAL
-        id.insert("internal");
-#endif
-    }
+    static std::set<std::string> id = get_all_ids();
 
     if (str == "all") {
         std::set<std::string>::const_iterator it;

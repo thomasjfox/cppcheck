@@ -160,6 +160,10 @@ public:
         return bool(_enabled.find(str) != _enabled.end());
     }
 
+    /** @brief Get a list of all valid ids
+     *  @return A set of all valid ids */
+    std::set<std::string> get_all_ids() const;
+
     /**
      * @brief Enable extra checks by id. See isEnabled()
      * @param str single id or list of id values to be enabled

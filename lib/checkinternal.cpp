@@ -309,6 +309,24 @@ void CheckInternal::checkExtraWhitespace()
     }
 }
 
+void CheckInternal::checkSettingName()
+{
+    std::set<std::string> all_ids = _settings->get_all_ids();
+
+    for (const Token *tok = _tokenizer->tokens(); tok; tok = tok->next()) {
+        // if this should ever give a FP, we have to check
+        // the class name before the ".", too. Keep it simple for now.
+        if (!Token::Match(tok, ". isEnabled ( %str% )"))
+            continue;
+
+        const std::string name = tok->tokAt(3)->strValue();
+
+        if (all_ids.find(name) == all_ids.end())
+            settingNameError(tok, name);
+    }
+}
+
+
 void CheckInternal::multiComparePatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
 {
     reportError(tok, Severity::error, "multiComparePatternError",
@@ -359,6 +377,13 @@ void CheckInternal::extraWhitespaceError(const Token* tok, const std::string& pa
 {
     reportError(tok, Severity::warning, "extraWhitespaceError",
                 "Found extra whitespace inside Token::" + funcname + "() call: \"" + pattern + "\""
+               );
+}
+
+void CheckInternal::settingNameError(const Token* tok, const std::string& name)
+{
+    reportError(tok, Severity::error, "settingNameError",
+                "Invalid setting name used in isEnabled(): \"" + name + "\""
                );
 }
 
