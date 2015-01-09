@@ -573,6 +573,17 @@ class MatchCompiler:
             if not match:
                 match = re.search('strAt\(.+?\) *(==|!=) *"', line)
             if not match:
+                match = re.search('insertToken *\("', line)
+            if not match:
+                match = re.search('->str *\("', line)
+            if not match:
+                match = re.search('originalName *\("', line)
+            # match if(xxx == "foo") statements
+            if not match:
+                match = re.search('if *\( *[a-zA-Z0-9_]* *(==|!=) *".*?"\)', line)
+            if not match:
+                match = re.search('insert *\("', line)
+            if not match:
                 break
 
             res = self._parseStringComparison(line, match.start())
