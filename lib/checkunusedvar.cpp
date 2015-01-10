@@ -1139,6 +1139,9 @@ std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> CheckUnusedVar::coll
     // index of varId -> variable usage
     std::map<unsigned int, GlobalVariableUsage> globalvar_usage;
 
+    const bool is_C = tokenizer->isC();
+    const std::string filename = tokenizer->list.getSourceFilePath();
+
     const SymbolDatabase *symbolDatabase = tokenizer->getSymbolDatabase();
     for (std::list<Scope>::const_iterator scope = symbolDatabase->scopeList.begin(); scope != symbolDatabase->scopeList.end(); ++scope) {
         // check global variables only
@@ -1149,21 +1152,34 @@ std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> CheckUnusedVar::coll
             // check plain data types only. C++ classes might lock resources etc.
             // Special case: "struct" is a data type in C, in C++ it's a public class
             // TODO: May be add inconclusive check for global, unused C++ classes
-            if ((var->isClass() && !tokenizer->isC()) && !var->isStlType())
+            if ((var->isClass() && !is_C) && !var->isStlType())
                 continue;
             if (var->declarationId() == 0 || var->nameToken() == nullptr)
                 continue;
 
-            // TODO: Handle duplicate declarationId in C mode (#6418)
-
             const std::string varname = var->name();
-            const std::string filename = tokenizer->list.getSourceFilePath();
+
+            // Workaround duplicate declarationId in C mode (#6418)
+            bool is_static = var->isStatic();
+            bool is_extern = var->isExtern();
+            if (is_C) {
+                for (std::map<unsigned int, GlobalVariableUsage>::iterator it = globalvar_usage.begin(); it != globalvar_usage.end(); ++it) {
+                    if (it->second.varName == varname) {
+                        is_static |= it->second.isStatic;
+                        is_extern |= it->second.isExtern;
+
+                        // remove previous definition
+                        globalvar_usage.erase(it);
+                        break;
+                    }
+                }
+            }
 
             GlobalVariableUsage usage(varname,
                                       filename,
                                       var->nameToken()->linenr(),
-                                      var->isStatic(),
-                                      var->isExtern());
+                                      is_static,
+                                      is_extern);
 
             globalvar_usage[var->declarationId()] = usage;
         }
