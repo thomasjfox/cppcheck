@@ -85,11 +85,11 @@ private:
 
     // used by multi-file analysis
     static void unusedGlobalVariableError(ErrorLogger * const errorLogger,
-                                    const std::string &filename, unsigned int lineNumber,
-                                    const std::string &varname);
+                                          const std::string &filename, unsigned int lineNumber,
+                                          const std::string &varname);
     static void globalVariableCanBeStaticError(ErrorLogger * const errorLogger,
-                                    const std::string &filename, unsigned int lineNumber,
-                                    const std::string &varname);
+            const std::string &filename, unsigned int lineNumber,
+            const std::string &varname);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const {
         CheckUnusedVar c(0, settings, errorLogger);
@@ -139,7 +139,16 @@ private:
     };
 
     std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> collectGlobalVariables(const Tokenizer *tokenizer) const;
-    void determineGlobalVariableUsage(std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> &usage, const Tokenizer *tokenizer) const;
+    static void scan_token_varusage(const Token *start,
+                                    const Token *end,
+                                    std::map<unsigned int, GlobalVariableUsage> &usage,
+                                    const std::string &filename);
+    static void usage_add_file(const Token *tok,
+                               std::map<unsigned int, GlobalVariableUsage> &usage,
+                               const std::string &filename);
+
+    void determineGlobalVariableUsage(std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> &usage,
+                                      const Tokenizer *tokenizer) const;
 
     /** @brief Parse current TU and extract file info */
     Check::FileInfo *getFileInfo(const Tokenizer *tokenizer, const Settings *settings) const;

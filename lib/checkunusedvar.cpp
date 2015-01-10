@@ -1149,7 +1149,7 @@ std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> CheckUnusedVar::coll
             // check plain data types only. C++ classes might lock resources etc.
             // Special case: "struct" is a data type in C, in C++ it's a public class
             // TODO: May be add inconclusive check for global, unused C++ classes
-            if ((var->isClass() && !tokenizer->isC()) || var->isStlType())
+            if ((var->isClass() && !tokenizer->isC()) && !var->isStlType())
                 continue;
             if (var->declarationId() == 0 || var->nameToken() == nullptr)
                 continue;
@@ -1169,43 +1169,172 @@ std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> CheckUnusedVar::coll
         }
     }
 
+    // look through function scopes for "extern" declared variables
+    for (std::list<Scope>::const_iterator scope = symbolDatabase->scopeList.begin(); scope != symbolDatabase->scopeList.end(); ++scope) {
+        if (scope->type != Scope::eFunction)
+            continue;
+
+        // TODO: Skip function scope if it's part of a namespace since we don't support
+        // collecting namespace-wide variables yet
+        if (scope->nestedIn && scope->nestedIn->type == Scope::eNamespace)
+            continue;
+
+        for (std::list<Variable>::const_iterator var = scope->varlist.begin(); var != scope->varlist.end(); ++var) {
+            if (!var->isExtern())
+                continue;
+
+            GlobalVariableUsage usage(var->name(),
+                                      filename,
+                                      var->nameToken()->linenr(),
+                                      var->isStatic(),
+                                      var->isExtern());
+
+            globalvar_usage[var->declarationId()] = usage;
+        }
+    }
+
     return globalvar_usage;
+}
+
+void CheckUnusedVar::usage_add_file(const Token *tok,
+                                    std::map<unsigned int, GlobalVariableUsage> &usage,
+                                    const std::string &filename)
+{
+    const unsigned int varId = tok->varId();
+    if (!varId)
+        return;
+
+    std::map<unsigned int, GlobalVariableUsage>::iterator it = usage.find(varId);
+    // check if global variable at all
+    if (it != usage.end())
+        it->second.used_in_files.insert(filename);
+}
+
+void CheckUnusedVar::scan_token_varusage(const Token *start,
+        const Token *end,
+        std::map<unsigned int, GlobalVariableUsage> &usage,
+        const std::string &filename)
+{
+    const Token *tok = start;
+    while ((tok = Token::findmatch(tok, "%var%", end)) != nullptr) {
+        usage_add_file(tok, usage, filename);
+        tok = tok->next();
+    }
 }
 
 void CheckUnusedVar::determineGlobalVariableUsage(std::map<unsigned int, CheckUnusedVar::GlobalVariableUsage> &usage, const Tokenizer *tokenizer) const
 {
     const SymbolDatabase *symbolDatabase = tokenizer->getSymbolDatabase();
+    const bool is_CPP = !tokenizer->isC();
+    const std::string filename = tokenizer->list.getSourceFilePath();
 
     // check function scopes for variable usage
     const std::size_t functions = symbolDatabase->functionScopes.size();
     for (std::size_t i = 0; i < functions; ++i) {
         const Scope * scope = symbolDatabase->functionScopes[i];
 
-        for (Token *tok = scope->classStart->next(); tok != scope->classEnd; tok = tok->next()) {
-            if (Token::Match(tok, "%var%")) {
-                std::map<unsigned int, GlobalVariableUsage>::iterator it = usage.find(tok->varId());
-                // check if global variable at all
-                if (it != usage.end())
-                    it->second.used_in_files.insert(tokenizer->list.getSourceFilePath());
+        // Variable usage scenarios:
+        // - const value inside constructor initialization list
+        // - default argument
+        // - inside function body
+        if (is_CPP) {
+            // function default arguments
+            if (scope->function) {
+                // Check function definition for default arguments
+                const Token *tok = scope->function->argDef;
+                if (tok)
+                    scan_token_varusage(tok, tok->link(), usage, filename);
+
+                // functions without separate definitiosn
+                // might have default arguments, too
+                tok = scope->function->arg;
+                if (tok)
+                    scan_token_varusage(tok, tok->link(), usage, filename);
+            }
+
+            if (scope->classDef) { // incomplete headers
+                // TODO: Is this 100% correct / crash safe?
+                // Does classDef always start before classEnd?
+                scan_token_varusage(scope->classDef, scope->classEnd, usage, filename);
+            }
+        }
+
+        // function body
+        scan_token_varusage(scope->classStart, scope->classEnd, usage, filename);
+    }
+
+    // check if other global variables use this variable
+    for (std::list<Scope>::const_iterator scope = symbolDatabase->scopeList.begin(); scope != symbolDatabase->scopeList.end(); ++scope) {
+        if (scope->type != Scope::eGlobal && scope->type != Scope::eNamespace)
+            continue;
+
+        for (std::list<Variable>::const_iterator var = scope->varlist.begin(); var != scope->varlist.end(); ++var) {
+            // start at the end of the var declaration till the next ';' is encountered.
+            // Global variables get simplified from "int x = 10;" to "int x; x = 10;"
+            // The code below also works for struct initialization
+            // std::cerr << "VAR: " << var->name() << std::endl;
+            const Token *tok = var->declEndToken();
+            // check unsimplified version "var = FOOBAR"
+            // Also check varId since "%var%" also matches "sizeof" f.e.
+            if (Token::Match(tok, "= %var%") && tok->next()->varId() != 0) {
+                usage_add_file(tok->next(), usage, filename);
+                continue;
+            }
+            tok = tok->next();
+
+            while (tok && tok->str() != ";") {
+                // std::cerr << "    tok: " << tok->str() << std::endl;
+                if (Token::Match(tok, "%var% = %var%")) {
+                    tok = tok->tokAt(2);
+                    usage_add_file(tok, usage, filename);
+                } else if (Token::Match(tok, "[{,(] %var%")) {
+                    // C++ struct initialization or sizeof(x)
+                    tok = tok->next();
+                    usage_add_file(tok, usage, filename);
+                }
+                tok = tok->next();
+            }
+
+            // C++ constructor calls
+            if (is_CPP && var->isClass()) {
+                tok = var->nameToken()->next();
+                if (tok && tok->str() == "(") {
+                    const Token *end = tok->link();
+                    while ((tok = Token::findmatch(tok, "%var%", end)) != nullptr) {
+                        usage_add_file(tok, usage, filename);
+                        tok = tok->next();
+                    }
+                }
+            }
+        }
+
+        // check function definitions without body for default arguments
+        if (is_CPP) {
+            for (std::list<Function>::const_iterator func = scope->functionList.begin(); func != scope->functionList.end(); ++func) {
+                if (func->hasBody())
+                    continue;
+
+                const Token *argDef = func->argDef;
+                if (argDef)
+                    scan_token_varusage(argDef, argDef->link(), usage, filename);
             }
         }
     }
-
-/*
-    // debug dump
-    std::cerr << "<<< " << tokenizer->list.getSourceFilePath() << " global variable map >>>" << std::endl;
-    for (std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
-        std::cerr << "[GLOBAL] variable: " << it->second.varName << " (" << it->first << ")";
-        std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
-        std::cerr << ", isStatic: " << it->second.isStatic;
-        std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
-        for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
-        {
-            std::cerr << "    used in: " << *debug_used << std::endl;
+    /*
+        // debug dump
+        std::cerr << "<<< " << tokenizer->list.getSourceFilePath() << " global variable map >>>" << std::endl;
+        for (std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
+            std::cerr << "[GLOBAL] variable: " << it->second.varName << " (" << it->first << ")";
+            std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
+            std::cerr << ", isStatic: " << it->second.isStatic;
+            std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
+            for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
+            {
+                std::cerr << "    used in: " << *debug_used << std::endl;
+            }
         }
-    }
-    std::cerr << std::endl;
-*/
+        std::cerr << std::endl;
+    */
 }
 
 Check::FileInfo *CheckUnusedVar::getFileInfo(const Tokenizer *tokenizer, const Settings *settings) const
@@ -1223,8 +1352,14 @@ Check::FileInfo *CheckUnusedVar::getFileInfo(const Tokenizer *tokenizer, const S
 
     // keep results. Strip varId since it's useless in multi-file checking
     VarUsageFileInfo *info = new VarUsageFileInfo();
-    for(std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it)
+    for (std::map<unsigned int, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
+        // skip variables that were not used and marked "extern".
+        // Otherwise we issue a false positive for library headers
+        if (it->second.used_in_files.empty() && it->second.isExtern)
+            continue;
+
         info->globalvar_usage.push_back(it->second);
+    }
 
     return info;
 }
@@ -1235,12 +1370,12 @@ void CheckUnusedVar::analyseWholeProgram(const std::list<Check::FileInfo*> &file
     // "static" variables are excluded since the names might clash
     std::map<std::string, GlobalVariableUsage> usage;
 
-    for(std::list<Check::FileInfo*>::const_iterator raw_per_file_info = fileInfo.begin(); raw_per_file_info != fileInfo.end(); ++raw_per_file_info) {
+    for (std::list<Check::FileInfo*>::const_iterator raw_per_file_info = fileInfo.begin(); raw_per_file_info != fileInfo.end(); ++raw_per_file_info) {
         const VarUsageFileInfo *per_file_info = dynamic_cast<VarUsageFileInfo*>(*raw_per_file_info);
         if (!per_file_info)
             continue;
 
-        for(std::vector<CheckUnusedVar::GlobalVariableUsage>::const_iterator info = per_file_info->globalvar_usage.begin(); info != per_file_info->globalvar_usage.end(); ++info) {
+        for (std::vector<CheckUnusedVar::GlobalVariableUsage>::const_iterator info = per_file_info->globalvar_usage.begin(); info != per_file_info->globalvar_usage.end(); ++info) {
             if (info->isStatic) {
                 if (info->used_in_files.size() == 0)
                     unusedGlobalVariableError(&errorLogger,
@@ -1254,33 +1389,33 @@ void CheckUnusedVar::analyseWholeProgram(const std::list<Check::FileInfo*> &file
 
             // unseen variable?
             std::map<std::string, GlobalVariableUsage>::iterator entry = usage.find(info->varName);
-            if(entry == usage.end()) {
+            if (entry == usage.end()) {
                 usage[info->varName] = *info;
             } else {
                 // merge info
                 entry->second.isExtern |= info->isExtern;
-                for(std::set<std::string>::const_iterator filename = info->used_in_files.begin(); filename != info->used_in_files.end(); ++filename)
+                for (std::set<std::string>::const_iterator filename = info->used_in_files.begin(); filename != info->used_in_files.end(); ++filename)
                     entry->second.used_in_files.insert(*filename);
             }
         }
     }
 
-/*
-    // debug dump
-    std::cerr << "<<< analyseWholeProgram() global variable map >>>" << std::endl;
-    for (std::map<std::string, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
-        std::cerr << "[GLOBAL] variable: " << it->second.varName;
-        std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
-        std::cerr << ", isStatic: " << it->second.isStatic;
-        std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
-        for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
-        {
-            std::cerr << "    used in: " << *debug_used << std::endl;
+    /*
+        // debug dump
+        std::cerr << "<<< analyseWholeProgram() global variable map >>>" << std::endl;
+        for (std::map<std::string, GlobalVariableUsage>::const_iterator it = usage.begin(); it != usage.end(); ++it) {
+            std::cerr << "[GLOBAL] variable: " << it->second.varName;
+            std::cerr << " from file: " << it->second.filename << ", line: " << it->second.lineNumber;
+            std::cerr << ", isStatic: " << it->second.isStatic;
+            std::cerr << ", isExtern: " << it->second.isExtern << std::endl;
+            for (std::set<std::string>::iterator debug_used = it->second.used_in_files.begin(); debug_used != it->second.used_in_files.end(); ++debug_used)
+            {
+                std::cerr << "    used in: " << *debug_used << std::endl;
+            }
         }
-    }
-*/
+    */
     // check all global variables now
-    for(std::map<std::string, GlobalVariableUsage>::const_iterator var = usage.begin(); var != usage.end(); ++var) {
+    for (std::map<std::string, GlobalVariableUsage>::const_iterator var = usage.begin(); var != usage.end(); ++var) {
         if (var->second.used_in_files.empty()) {
             unusedGlobalVariableError(&errorLogger,
                                       var->second.filename,
