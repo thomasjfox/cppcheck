@@ -22,8 +22,10 @@
 
 #include "testsuite.h"
 #include "tokenize.h"
+#include "cppcheck.h"
 #include "checkunusedvar.h"
 
+#include <string.h>
 #include <sstream>
 extern std::ostringstream errout;
 
@@ -162,6 +164,11 @@ private:
         TEST_CASE(crash1);
         TEST_CASE(crash2);
         TEST_CASE(usingNamespace);     // #4585
+
+        TEST_CASE(globalvarC);
+        TEST_CASE(globalvarDoubleDeclarationC);
+        TEST_CASE(globalvarCPP);
+        TEST_CASE(globalvarMultiFile);
     }
 
     void checkStructMemberUsage(const char code[]) {
@@ -3821,6 +3828,253 @@ private:
                               "   }\n"
                               "   return j;\n"
                               "}"); // #4585
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void globalVariableUsage(const char code[], const char filename[]="test.cpp",
+                             const char code2[]="", const char filename2[]="test2.cpp") {
+        // clear the error buffer
+        errout.str("");
+
+        CppCheck cppCheck(*this, true);
+        Settings& settings = cppCheck.settings();
+        settings.addEnabled("style");
+
+        cppCheck.check(filename, code);
+
+        // multi-file analysis?
+        if (strlen(code2))
+            cppCheck.check(filename2, code2);
+
+        cppCheck.analyseWholeProgram();
+    }
+
+    void globalvarC() {
+        // simply unused
+        globalVariableUsage("int x;", "test.c");
+        ASSERT_EQUALS("[test.c:1]: (style) Global variable 'x' is never used.\n", errout.str());
+
+        // can be static
+        globalVariableUsage("int x;\n"
+                            "int f() {return x;}\n", "test.c");
+        ASSERT_EQUALS("[test.c:1]: (style) Global variable 'x' is used by this file only. It can be made static\n", errout.str());
+
+        // no 'can be static' for external vars
+        globalVariableUsage("extern int x;\n"
+                            "int f() {return x;}\n", "test.c");
+        ASSERT_EQUALS("", errout.str());
+
+        // all fine
+        globalVariableUsage("static int x;\n"
+                            "int f() {return x;}\n", "test.c");
+        ASSERT_EQUALS("", errout.str());
+
+        // one var using another var
+        globalVariableUsage("static int x;\n"
+                            "int y = x;\n", "test.c");
+        ASSERT_EQUALS("[test.c:2]: (style) Global variable 'y' is never used.\n", errout.str());
+
+        // with initialization
+        globalVariableUsage("int x = 10;\n", "test.c");
+        ASSERT_EQUALS("[test.c:1]: (style) Global variable 'x' is never used.\n", errout.str());
+
+        // C struct (C mode)
+        globalVariableUsage("struct foo {\n"
+                            "    int x;\n"
+                            "} bar;\n", "test.c");
+        ASSERT_EQUALS("[test.c:3]: (style) Global variable 'bar' is never used.\n", errout.str());
+
+        // C struct with initialization
+        // (make sure there is no false negative)
+        globalVariableUsage("struct foo {\n"
+                            "    int x;\n"
+                            "};\n"
+                            "struct foo bar = { .x = 10 };\n"
+                            , "test.c");
+        ASSERT_EQUALS("[test.c:4]: (style) Global variable 'bar' is never used.\n", errout.str());
+
+        // C struct with initialization - used only locally
+        globalVariableUsage("struct foo {\n"
+                            "    int x;\n"
+                            "};\n"
+                            "struct foo bar = { .x = 10 };\n"
+                            "int f() { return bar.x; }\n", "test.c");
+        ASSERT_EQUALS("[test.c:4]: (style) Global variable 'bar' is used by this file only. It can be made static\n", errout.str());
+
+        // C struct with initialization - used
+        globalVariableUsage("struct foo {\n"
+                            "    int x;\n"
+                            "};\n"
+                            "static struct foo bar = { .x = 10 };\n"
+                            "int f() { return bar.x; }\n", "test.c");
+        ASSERT_EQUALS("", errout.str());
+
+        // ensure we catch sizeof assignments ("sizeof" also matches "%var%". grrr)
+        globalVariableUsage("extern const char foo[10];\n"
+                            "static int bar = sizeof(foo);\n"
+                            "static int bar2 = sizeof foo;\n"
+                            "int f() { return bar + bar2; }\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // no warning for "extern" keyword. Prevent FPs from header files.
+        globalVariableUsage("extern int x;\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void globalvarDoubleDeclarationC() {
+        globalVariableUsage("static int x;\n"
+                            "int x;\n"
+                            "int f() {return x;}\n", "test.c");
+        ASSERT_EQUALS("", errout.str());
+
+        // no 'can be static' for external vars - double declaration
+        globalVariableUsage("extern int x;\n"
+                            "int x;\n"
+                            "int f() {return x;}\n", "test.c");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void globalvarCPP() {
+        // no warning for non-standard C++ classes (C++ file parser mode)
+        // They might do work via the constructor/destructor.
+        globalVariableUsage("struct foo {\n"
+                            "} bar;\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // warn about unused STL strings
+        globalVariableUsage("std::string str(\"foo\");\n");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Global variable 'str' is never used.\n", errout.str());
+
+        // variable used in C++ constructor
+        globalVariableUsage("const char *init = \"foobar\";\n"
+                            "static std::string str(init);\n"
+                            "std::string f() { return str; }\n");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Global variable 'init' is used by this file only. It can be made static\n", errout.str());
+
+        // variable used in C++ constructor - all static
+        globalVariableUsage("static const char *init = \"foobar\";\n"
+                            "static std::string str(init);\n"
+                            "std::string f() { return str; }\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // variable used by another variable - not simplified by our tokenizer (tinyxml.cpp)
+        globalVariableUsage("static const char LINE_FEED = (char)0x0a;\n"
+                            "static const char LF = LINE_FEED;\n");
+        ASSERT_EQUALS("[test.cpp:2]: (style) Global variable 'LF' is never used.\n", errout.str());
+
+        // init of C++ struct with another variable - taken from tinyxml.cpp
+        globalVariableUsage("struct Entity {\n"
+                            "    const char* pattern;\n"
+                            "    char value;\n"
+                            "};\n"
+                            "static const char DOUBLE_QUOTE          = '\"';\n"
+                            "static const Entity entities[2] = {\n"
+                            "    { \"quot\", DOUBLE_QUOTE },\n"
+                            "    { \"amp\", '&' },\n"
+                            "};\n"
+                            "char f() { return entities[0].value; }\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // variable used inside (anonymous) namespace
+        // also be quiet on vars inside namespaces.
+        globalVariableUsage("static int x = 10;\n"
+                            "namespace {\n"
+                            "    int y = x;\n"
+                            "};\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // constructor embedded inside class
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "struct base\n"
+                            "{\n"
+                            "    base(int x) {}\n"
+                            "};\n"
+                            "class other : public base\n"
+                            "{\n"
+                            "    other()\n"
+                            "        : base(predefined)\n"
+                            "    { }\n"
+                            "};\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // constructor outside the class
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "struct base\n"
+                            "{\n"
+                            "    base(int x) {}\n"
+                            "};\n"
+                            "class other : public base\n"
+                            "{\n"
+                            "    other();\n"
+                            "};\n"
+                            "\n"
+                            "other::other()\n"
+                            "    : base(predefined)\n"
+                            "{}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // incomplete information about class (missing headers)
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "other::other()\n"
+                            "    : base(predefined)\n"
+                            "{ }\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // function default parameter
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "int f(int x = predefined)\n"
+                            "{\n"
+                            "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // function default parameter - separate definition
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "int f(int x = predefined);\n"
+                            "int f(int x)\n"
+                            "{\n"
+                            "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // function default parameter - no func body
+        globalVariableUsage("static const int predefined = 8;\n"
+                            "int f(int x = predefined);\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // don't crash on incomplete classes
+        globalVariableUsage("class EXPORTFOO Results\n"
+                            "{\n"
+                            "public:\n"
+                            "    Results() {}\n"
+                            "    ~Results() {}\n"
+                            "};\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void globalvarMultiFile() {
+        // use global from first file
+        globalVariableUsage("int x;\n", "first.c",
+                            "extern int x;\n"
+                            "int f() { return x; }\n", "second.c");
+        ASSERT_EQUALS("", errout.str());
+
+        // global from first file never used
+        globalVariableUsage("int x;\n", "first.c",
+                            "static int y;\n"
+                            "int f() { return y; }\n", "second.c");
+        ASSERT_EQUALS("[first.c:1]: (style) Global variable 'x' is never used.\n", errout.str());
+
+        // first file contains unused static var with same name
+        globalVariableUsage("static int x;", "first.c",
+                            "extern int x;\n"
+                            "int f() { return x; }\n", "second.c");
+        ASSERT_EQUALS("[first.c:1]: (style) Global variable 'x' is never used.\n", errout.str());
+
+        // "extern" keyword used in function body
+        globalVariableUsage("int x;\n", "first.c",
+                            "int f() {\n"
+                            "    extern int x;\n"
+                            "    return x;\n"
+                            "}\n", "second.c");
         ASSERT_EQUALS("", errout.str());
     }
 };
