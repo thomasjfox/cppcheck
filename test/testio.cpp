@@ -3749,11 +3749,20 @@ private:
               "}\n");
         ASSERT_EQUALS("[test.cpp:4]: (warning) format string is a pointer. Did you intend to print a string via %s?\n", errout.str());
 
-        // be quiet on harmless, fixed format strings
+        // be quiet on fixed format strings
         check("void test() {\n"
               "    char out[100];\n"
               "    char *username = \"user\";\n"
               "    snprintf(out, sizeof(out), \"%s\", username);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // also be quiet when arguments follow the format string
+        check("void test() {\n"
+              "    char out[100];\n"
+              "    char *format = \"%s\n\"\n"
+              "    char *username = \"user\";\n"
+              "    snprintf(out, sizeof(out), format, username);\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
     }

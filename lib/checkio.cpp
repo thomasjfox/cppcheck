@@ -1414,8 +1414,11 @@ void CheckIO::checkFormatStrIsPointer()
                                         if (var)
                                             std::cerr << "TOMJ: found variable!\n";
                     */
-                    if (var && var->isPointer())
-                        formatstrIsPointerError(arg);
+                    if (var && var->isPointer()) {
+                        // did someone pass the buffer directly without further arguments?
+                        if (arg->nextArgument() == nullptr)
+                            formatstrIsPointerError(arg);
+                    }
                     break;
                 }
 
