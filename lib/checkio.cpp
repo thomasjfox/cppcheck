@@ -24,6 +24,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <iostream>
 
 //---------------------------------------------------------------------------
 
@@ -1370,6 +1371,62 @@ void CheckIO::checkWrongPrintfScanfArguments()
     }
 }
 
+void CheckIO::checkFormatStrIsPointer()
+{
+    const bool warning = _settings->isEnabled("warning");
+    if (!warning)
+        return;
+
+    const SymbolDatabase *symbolDatabase = _tokenizer->getSymbolDatabase();
+    const std::size_t functions = symbolDatabase->functionScopes.size();
+    for (std::size_t i = 0; i < functions; ++i) {
+        const Scope * scope = symbolDatabase->functionScopes[i];
+        for (const Token* tok = scope->classStart->next(); tok != scope->classEnd; tok = tok->next()) {
+            if (!Token::Match(tok, "%name% ("))
+                continue;
+
+            if (!_settings->library.formatstr_function(tok->str()))
+                continue;
+
+            int formatArgNr = -1;
+            const std::map<int, Library::ArgumentChecks>& argumentChecks = _settings->library.argumentChecks.at(tok->str());
+            for (std::map<int, Library::ArgumentChecks>::const_iterator i = argumentChecks.begin(); i != argumentChecks.end(); ++i) {
+                if (i->second.formatstr) {
+                    formatArgNr = i->first;
+                    break;
+                }
+            }
+            // fix up offset since we count from 0
+            --formatArgNr;
+            if (formatArgNr <= -1)
+                throw InternalError(0, "Internal Error: Formatstr arg not found for formatstr function: " + tok->str());
+
+//          std::cerr << "TOMJ: function: " << tok->str() << ", argNr: " << formatArgNr << std::endl;
+
+            int currentArg = 0;
+            const Token *arg = tok->tokAt(2);
+            while (arg) {
+                // std::cerr << "TOMJ: arg(" << currentArg << "): " << arg->str() << std::endl;
+                if (currentArg == formatArgNr) {
+                    const Variable *var = arg->variable();
+                    /*
+                                        // std::cerr << "TOMJ: checking formatstr: " << arg->str() << std::endl;
+                                        if (var)
+                                            std::cerr << "TOMJ: found variable!\n";
+                    */
+                    if (var && var->isPointer())
+                        formatstrIsPointerError(arg);
+                    break;
+                }
+
+                arg = arg->nextArgument();
+                ++currentArg;
+            }
+        }
+    }
+}
+
+
 // We currently only support string literals, variables, and functions.
 /// @todo add non-string literals, and generic expressions
 
@@ -1975,4 +2032,9 @@ void CheckIO::invalidScanfFormatWidthError(const Token* tok, unsigned int numFor
                << varname << "[" << arrlen << "]', use %" << (arrlen - 1) << "s to prevent overflowing it.";
         reportError(tok, Severity::error, "invalidScanfFormatWidth", errmsg.str(), false);
     }
+}
+
+void CheckIO::formatstrIsPointerError(const Token* tok)
+{
+    reportError(tok, Severity::warning, "formatstrIsPointerError", "format string is a pointer. Did you intend to print a string via %s?");
 }

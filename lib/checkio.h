@@ -53,6 +53,7 @@ public:
         checkIO.checkCoutCerrMisusage();
         checkIO.checkFileUsage();
         checkIO.invalidScanf();
+        checkIO.checkFormatStrIsPointer();
     }
 
     /** @brief %Check for missusage of std::cout */
@@ -66,6 +67,9 @@ public:
 
     /** @brief %Checks type and number of arguments given to functions like printf or scanf*/
     void checkWrongPrintfScanfArguments();
+
+    /** @brief %Check if format str is a pointer - often used in exploits / programming mistakes */
+    void checkFormatStrIsPointer();
 
 private:
     class ArgumentInfo {
@@ -120,6 +124,7 @@ private:
     void invalidPrintfArgTypeError_float(const Token* tok, unsigned int numFormat, const std::string& specifier, const ArgumentInfo* argInfo);
     void invalidLengthModifierError(const Token* tok, unsigned int numFormat, const std::string& modifier);
     void invalidScanfFormatWidthError(const Token* tok, unsigned int numFormat, int width, const Variable *var);
+    void formatstrIsPointerError(const Token *tok);
     static void argumentType(std::ostream & s, const ArgumentInfo * argInfo);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const {
@@ -148,6 +153,7 @@ private:
         c.invalidLengthModifierError(0, 1, "I");
         c.invalidScanfFormatWidthError(0, 10, 5, NULL);
         c.wrongPrintfScanfPosixParameterPositionError(0, "printf", 2, 1);
+        c.formatstrIsPointerError(NULL);
     }
 
     static std::string myName() {

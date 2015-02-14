@@ -61,6 +61,8 @@ private:
 
         TEST_CASE(testTernary); // ticket #6182
         TEST_CASE(testUnsignedConst); // ticket #6132
+
+        TEST_CASE(testFormatstrIsPointer);
     }
 
     void check(const char code[], bool inconclusive = false, bool portability = false, Settings::PlatformType platform = Settings::Unspecified) {
@@ -89,6 +91,7 @@ private:
         checkIO.checkCoutCerrMisusage();
         checkIO.checkFileUsage();
         checkIO.invalidScanf();
+        checkIO.checkFormatStrIsPointer();
     }
 
 
@@ -3730,6 +3733,30 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void testFormatstrIsPointer() {
+        // formatstr is the first argument
+        check("void test() {\n"
+              "    char *username = \"user\";\n"
+              "    printf(username);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (warning) format string is a pointer. Did you intend to print a string via %s?\n", errout.str());
+
+        // formatstr is the third argument
+        check("void test() {\n"
+              "    char out[100];\n"
+              "    char *username = \"user\";\n"
+              "    snprintf(out, sizeof(out), username);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4]: (warning) format string is a pointer. Did you intend to print a string via %s?\n", errout.str());
+
+        // be quiet on harmless, fixed format strings
+        check("void test() {\n"
+              "    char out[100];\n"
+              "    char *username = \"user\";\n"
+              "    snprintf(out, sizeof(out), \"%s\", username);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
 };
 
 REGISTER_TEST(TestIO)
