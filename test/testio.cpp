@@ -3765,6 +3765,13 @@ private:
               "    snprintf(out, sizeof(out), format, username);\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        // be quiet on Qt stuff
+        check("void test(QCString ctx) {\n"
+              "    char *username = \"user\";\n"
+              "    ctx.sprintf(\"from %s\",username);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 };
 

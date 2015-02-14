@@ -1385,6 +1385,10 @@ void CheckIO::checkFormatStrIsPointer()
             if (!Token::Match(tok, "%name% ("))
                 continue;
 
+            // skip C++ class functions
+            if (tok->strAt(-1) == ".")
+                continue;
+
             if (!_settings->library.formatstr_function(tok->str()))
                 continue;
 
