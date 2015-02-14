@@ -24,6 +24,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <map>
 #include <iostream>
 
 //---------------------------------------------------------------------------
@@ -1371,11 +1372,26 @@ void CheckIO::checkWrongPrintfScanfArguments()
     }
 }
 
-void CheckIO::checkFormatStrIsPointer()
+void CheckIO::checkFormatStrIsPointer(std::map<std::string, int> *helper_functions, unsigned int recursion_level)
 {
     const bool warning = _settings->isEnabled("warning");
     if (!warning)
         return;
+
+    if (recursion_level > 10)
+        throw InternalError(0, "Internal Error: Indirection limit reached while checking formatstr helper functions");
+
+    // Helper function calling a formatstr function.
+    // Function pointer -> argument number of format str
+    std::map<std::string, int> collected_helpers;
+
+    if (helper_functions) {
+        std::map<std::string, int>::const_iterator it = helper_functions->begin();
+        for(; it != helper_functions->end(); ++it) {
+            std::cerr << "TOMJ: Checking helper function(level: " << recursion_level << "): " << it->first;
+            std::cerr << ", formatArg at pos: " << it->second << std::endl;
+        }
+    }
 
     const SymbolDatabase *symbolDatabase = _tokenizer->getSymbolDatabase();
     const std::size_t functions = symbolDatabase->functionScopes.size();
@@ -1389,25 +1405,29 @@ void CheckIO::checkFormatStrIsPointer()
             if (tok->strAt(-1) == ".")
                 continue;
 
-            if (!_settings->library.formatstr_function(tok->str()))
-                continue;
-
             int formatArgNr = -1;
-            const std::map<int, Library::ArgumentChecks>& argumentChecks = _settings->library.argumentChecks.at(tok->str());
-            for (std::map<int, Library::ArgumentChecks>::const_iterator i = argumentChecks.begin(); i != argumentChecks.end(); ++i) {
-                if (i->second.formatstr) {
-                    formatArgNr = i->first;
-                    break;
+            if (helper_functions) {
+                std::map<std::string, int>::const_iterator helper = helper_functions->find(tok->str());
+                if (helper == helper_functions->end())
+                    continue;
+                formatArgNr = helper->second;
+            } else {
+                if (!_settings->library.formatstr_function(tok->str()))
+                    continue;
+
+                const std::map<int, Library::ArgumentChecks>& argumentChecks = _settings->library.argumentChecks.at(tok->str());
+                for (std::map<int, Library::ArgumentChecks>::const_iterator i = argumentChecks.begin(); i != argumentChecks.end(); ++i) {
+                    if (i->second.formatstr) {
+                        formatArgNr = i->first;
+                        break;
+                    }
                 }
+                if (formatArgNr == -1)
+                    throw InternalError(0, "Internal Error: Formatstr arg not found for formatstr function: " + tok->str());
             }
-            // fix up offset since we count from 0
-            --formatArgNr;
-            if (formatArgNr <= -1)
-                throw InternalError(0, "Internal Error: Formatstr arg not found for formatstr function: " + tok->str());
 
 //          std::cerr << "TOMJ: function: " << tok->str() << ", argNr: " << formatArgNr << std::endl;
-
-            int currentArg = 0;
+            int currentArg = 1;
             const Token *arg = tok->tokAt(2);
             while (arg) {
                 // std::cerr << "TOMJ: arg(" << currentArg << "): " << arg->str() << std::endl;
@@ -1423,6 +1443,24 @@ void CheckIO::checkFormatStrIsPointer()
                         if (arg->nextArgument() == nullptr)
                             formatstrIsPointerError(arg);
                     }
+
+                    // try to detect if this is just a (log) helper function
+                    // and we can find the real call site of the helper
+                    Function *func = scope->function;
+                    if (var && func) {
+                        std::list<Variable>::const_iterator funcArg = func->argumentList.begin();
+                        int funcArgNr = 1;
+                        for (; funcArg != func->argumentList.end(); ++funcArg) {
+                            if (var->name() == funcArg->name()) {
+                                // TODO: Handle C++ argument overloading
+                                // -> May be disable indirection support for C++ for now
+                                collected_helpers[func->name()] = funcArgNr;
+                                break;
+                            }
+                            ++funcArgNr;
+                        }
+                    }
+
                     break;
                 }
 
@@ -1431,6 +1469,9 @@ void CheckIO::checkFormatStrIsPointer()
             }
         }
     }
+
+    if (!collected_helpers.empty())
+        checkFormatStrIsPointer(&collected_helpers, recursion_level+1);
 }
 
 

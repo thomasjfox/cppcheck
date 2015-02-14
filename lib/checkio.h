@@ -23,6 +23,8 @@
 
 #include "check.h"
 #include "config.h"
+#include <map>
+#include <string>
 
 /// @addtogroup Checks
 /// @{
@@ -69,7 +71,7 @@ public:
     void checkWrongPrintfScanfArguments();
 
     /** @brief %Check if format str is a pointer - often used in exploits / programming mistakes */
-    void checkFormatStrIsPointer();
+    void checkFormatStrIsPointer(std::map<std::string, int> *helper_functions=NULL, unsigned int recursion_level=0);
 
 private:
     class ArgumentInfo {

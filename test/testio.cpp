@@ -63,6 +63,7 @@ private:
         TEST_CASE(testUnsignedConst); // ticket #6132
 
         TEST_CASE(testFormatstrIsPointer);
+        TEST_CASE(testFormatstrIsPointerIndirection);
     }
 
     void check(const char code[], bool inconclusive = false, bool portability = false, Settings::PlatformType platform = Settings::Unspecified) {
@@ -3772,6 +3773,42 @@ private:
               "    ctx.sprintf(\"from %s\",username);\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+    }
+
+    void testFormatstrIsPointerIndirection() {
+        // indirection via helper function
+        check("void log_msg(char *msg, ...) {\n"
+              "    va_list args;\n"
+              "    va_start(args);\n"
+              "    vprintf(msg, args);\n"
+              "    va_end(args);\n"
+              "}\n"
+              "void test() {\n"
+              "    char *username = \"user\";\n"
+              "    log_msg(username);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:9]: (warning) format string is a pointer. Did you intend to print a string via %s?\n", errout.str());
+
+        // two indirections
+        check(""
+              "void err_msg(char *msg, ...) {\n"
+              "    va_list args;\n"
+              "    va_start(args);\n"
+              "    log_msg(msg, args);\n"
+              "    va_end(args);\n"
+              "    exit(-1);\n"
+              "}\n"
+              "void log_msg(char *msg, ...) {\n"
+              "    va_list args;\n"
+              "    va_start(args);\n"
+              "    vprintf(msg, args);\n"
+              "    va_end(args);\n"
+              "}\n"
+              "void test() {\n"
+              "    char *username = \"user\";\n"
+              "    err_msg(username);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:16]: (warning) format string is a pointer. Did you intend to print a string via %s?\n", errout.str());
     }
 };
 
